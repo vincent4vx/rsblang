@@ -1,15 +1,16 @@
+pub use tokenizer::Tokenizer;
+pub use tokens::Token;
+
 mod tokens;
 mod tokenizer;
 mod util;
 
-pub use tokens::Token;
-pub use tokenizer::Tokenizer;
-
 #[cfg(test)]
 mod test {
     use std::path::Path;
-    use crate::tokenizer::Tokenizer;
+
     use crate::tokenizer::Token;
+    use crate::tokenizer::Tokenizer;
 
     #[test]
     fn from_file_success() {
@@ -56,5 +57,13 @@ mod test {
         assert_eq!(Token::ClosingParenthesis, tokens[35]);
         assert_eq!(Token::EndOfStatement, tokens[36]);
         assert_eq!(Token::ClosingBrace, tokens[37]);
+    }
+
+    #[test]
+    fn from_file_not_found() {
+        match Tokenizer::from_file(Path::new("not_found")) {
+            Ok(_) => assert!(false, "An error should be returned"),
+            Err(e) => assert_eq!("No such file or directory (os error 2)", e.to_string()),
+        }
     }
 }

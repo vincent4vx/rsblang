@@ -87,14 +87,8 @@ impl Tokenizer {
                     '{' => Ok(self.tokens.push(Token::OpeningBrace)),
                     '}' => Ok(self.tokens.push(Token::ClosingBrace)),
                     ';' => Ok(self.tokens.push(Token::EndOfStatement)),
-                    ',' => Ok(self.tokens.push(Token::Operator(String::from(",")))),
-                    ':' => Ok(self.tokens.push(Token::Operator(String::from(":")))),
-                    '|' => Ok(self.tokens.push(Token::Operator(String::from("|")))),
-                    '&' => Ok(self.tokens.push(Token::Operator(String::from("&")))),
-                    '%' => Ok(self.tokens.push(Token::Operator(String::from("%")))),
-                    '*' => Ok(self.tokens.push(Token::Operator(String::from("*")))),
-                    '?' => Ok(self.tokens.push(Token::Operator(String::from("?")))),
-                    c if ['+', '-', '/', '!', '=', '>', '<'].contains(&c) => {
+                    ','|':'|'|'|'&'|'%'|'*'|'?' => Ok(self.tokens.push(Token::Operator(String::from(c)))),
+                    '+'|'-'|'/'|'!'|'='|'>'|'<' => {
                         self.state = TokenizerState::AmbiguousOperator;
                         self.buffer.push(c);
 
@@ -124,7 +118,7 @@ impl Tokenizer {
                     }
 
                     // "double" operators
-                    c if ['+', '-', '>', '<', '='].contains(&c) && self.buffer.ends_with(c) => {
+                    '+'|'-'|'>'|'<'|'=' if self.buffer.ends_with(c) => {
                         self.buffer.push(c);
 
                         self.save_token()
