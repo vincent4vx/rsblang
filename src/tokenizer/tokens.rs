@@ -127,4 +127,11 @@ impl Token {
             _ => false,
         }
     }
+
+    pub fn is_operator_str(&self, str: &str) -> bool {
+        match self {
+            Token::Operator(name) => name == str,
+            _ => false,
+        }
+    }
 }

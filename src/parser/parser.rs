@@ -70,7 +70,11 @@ impl Parser {
             Token::Switch => println!("switch"),
             Token::Goto => println!("goto"),
             Token::Return => println!("return"),
-            token => println!("expression {:?}", token)
+            _ => {
+                self.cursor = self.cursor - 1; // Rollback to previous token
+                println!("expression {:?}", self.parse_rvalue());
+                self.check(Token::EndOfStatement);
+            }
         }
     }
 
@@ -144,108 +148,220 @@ impl Parser {
         println!("endif")
     }
 
-    fn parse_rvalue(&mut self) -> Option<String> {
-        let current = self.current();
-
-        match current {
-            Token::OpeningParenthesis => {
-                self.next();
-
-                let expr = self.parse_rvalue();
-
-                match self.next() {
-                    Token::ClosingParenthesis => expr,
-                    token => panic!("invalid token {:?}", token)
-                }
-            },
-
-            Token::Integer(ival) => Some(format!("int({})", ival)),
-            Token::Char(chars) => Some(format!("char({})", chars[0])),
-            Token::String(str) => Some(format!("string({})", str)),
-
-            Token::Operator(op) if (op == "-" || op == "!") => {
-                self.next();
-
-                match self.parse_rvalue() {
-                    Some(v) => Some(format!("unary({} {})", op, v)),
-                    None => panic!("invalid unary")
-                }
-            },
-
-            Token::Operator(op) if (op == "&" || op == "++" || op == "--") => {
-                self.next();
-
-                match self.parse_lvalue() {
-                    Some(v) => Some(format!("unary({} {})", op, v)),
-                    None => panic!("invalid unary")
-                }
-            },
-            _ => {
-                match self.parse_lvalue() {
-                    Some(v) => {
-                        match self.current() {
-                            Token::Operator(op) if op == "=" => self.parse_assign(v),
-                            Token::Operator(op) if (op == "++" || op == "--") => Some(format!("unary({} {})", v, op)),
-                            tok => panic!("unexpected token ({:?})", tok)
-                        }
-                    },
-                    None => panic!("invalid lvalue")
-                }
-            },
-        }
+    fn parse_rvalue(&mut self) -> String {
+        return self.parse_assign_left().join(" ") + self.parse_or_expr().as_str();
     }
 
-    fn parse_assign(&mut self, left: String) -> Option<String> {
-        if !self.next().is_operator('=') {
-            panic!("assign: invalid token, expect =");
+    fn parse_or_expr(&mut self) -> String {
+        let mut expr = self.parse_and_expr();
+
+        while self.current().is_operator_str("||") {
+            self.next();
+
+            expr += ", ";
+            expr += self.parse_and_expr().as_str();
         }
 
-        match self.current() {
-            Token::Operator(op) if (op == "|" || op == "&" || op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == ">>" || op == "<<" || op == "-" || op == "+" || op == "%" || op == "*" || op == "/") => {
-                match self.parse_rvalue() {
-                    Some(right) => Some(format!("assign+op({} {}= {})", left, op, right)),
-                    None => panic!("assign: invalid right rvalue")
-                }
-            },
-            _ => {
-                match self.parse_rvalue() {
-                    Some(right) => Some(format!("assign({} = {})", left, right)),
-                    None => panic!("assign: invalid right rvalue")
+        return format!("and({})", expr);
+    }
+
+    fn parse_and_expr(&mut self) -> String {
+        let mut expr = self.parse_equality_expr();
+
+        while self.current().is_operator_str("&&") {
+            self.next();
+
+            expr += ", ";
+            expr += self.parse_equality_expr().as_str();
+        }
+
+        return format!("or({})", expr);
+    }
+
+    fn parse_equality_expr(&mut self) -> String {
+        let mut expr = self.parse_shift_expr();
+
+        loop {
+            match self.current() {
+                Token::Operator(op) if op == "==" => {
+                    self.next();
+                    expr = format!("equals({}, {})", expr, self.parse_shift_expr());
+                },
+                Token::Operator(op) if op == "!=" => {
+                    self.next();
+                    expr = format!("different({}, {})", expr, self.parse_shift_expr());
+                },
+                _ => break
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_shift_expr(&mut self) -> String {
+        let mut expr = self.parse_add_expr();
+
+        loop {
+            match self.current() {
+                Token::Operator(op) if op == ">>" => {
+                    self.next();
+                    expr = format!("shift_right({}, {})", expr, self.parse_add_expr());
+                },
+                Token::Operator(op) if op == "<<" => {
+                    self.next();
+                    expr = format!("shift_left({}, {})", expr, self.parse_add_expr());
+                },
+                _ => break
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_add_expr(&mut self) -> String {
+        let mut expr = self.parse_mul_expr();
+
+        loop {
+            match self.current() {
+                Token::Operator(op) if op == "+" => {
+                    self.next();
+                    expr = format!("add({}, {})", expr, self.parse_mul_expr());
+                },
+                Token::Operator(op) if op == "-" => {
+                    self.next();
+                    expr = format!("minus({}, {})", expr, self.parse_mul_expr());
+                },
+                _ => break
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_mul_expr(&mut self) -> String {
+        let mut expr = self.parse_prefix_expr();
+
+        loop {
+            match self.current() {
+                Token::Operator(op) if op == "*" => {
+                    self.next();
+                    expr = format!("multiply({}, {})", expr, self.parse_prefix_expr());
+                },
+                Token::Operator(op) if op == "/" => {
+                    self.next();
+                    expr = format!("divide({}, {})", expr, self.parse_prefix_expr());
+                },
+                Token::Operator(op) if op == "%" => {
+                    self.next();
+                    expr = format!("mod({}, {})", expr, self.parse_prefix_expr());
+                },
+                _ => break
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_assign_left(&mut self) -> Vec<String> {
+        let mut ret = Vec::new();
+
+        loop {
+            let cursor = self.cursor;
+            let left = self.parse_prefix_expr();
+
+            if !self.current().is_operator('=') {
+                self.cursor = cursor; // rollback to position before parsing
+                break;
+            }
+
+            match self.next() {
+                Token::Operator(op) if (op == "|" || op == "&" || op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == ">>" || op == "<<" || op == "-" || op == "+" || op == "%" || op == "*" || op == "/") => {
+                    ret.push(format!("{} {}= ", left, op))
+                },
+                _ => {
+                    ret.push(format!("{} = ", left))
                 }
             }
         }
+
+        return ret;
     }
 
-    fn parse_lvalue(&mut self) -> Option<String> {
+    fn parse_prefix_expr(&mut self) -> String {
+        let mut expr = String::new();
+
+        loop {
+            match self.current() {
+                Token::Operator(op) if (op == "!" || op == "-" || op == "&" || op == "*" || op == "++" || op == "--") => {
+                    self.next();
+                    expr += format!("unary({}) ", op).as_str();
+                },
+                _ => break
+            }
+        }
+
+        expr += self.parse_postfix_expr().as_str();
+
+        return expr;
+    }
+
+    fn parse_postfix_expr(&mut self) -> String {
+        let mut expr = self.parse_atomic_expr();
+
+        loop {
+            match self.current() {
+                Token::OpeningBracket => todo!("implements array access"),
+                Token::OpeningParenthesis => {
+                    expr = format!("call({}, [{}])", expr, self.parse_function_call_arguments().join(", "));
+                },
+                Token::Operator(op) if (op == "++" || op == "--") => {
+                    self.next();
+
+                    expr = format!("postfix({}, {})", expr, op);
+                },
+                _ => break,
+            }
+        }
+
+        return expr;
+    }
+
+    fn parse_function_call_arguments(&mut self) -> Vec<String> {
+        self.check(Token::OpeningParenthesis);
+
+        let mut args = Vec::new();
+
+        while self.current() != Token::ClosingParenthesis {
+            args.push(self.parse_rvalue());
+
+            match self.current() {
+                Token::Operator(op) if op == "," => {
+                    self.next();
+                },
+                Token::ClosingParenthesis => {},
+                tok => panic!("unexpected token {:?} expecting , or )", tok)
+            }
+        }
+
+        self.next();
+
+        return args;
+    }
+
+    fn parse_atomic_expr(&mut self) -> String {
         match self.next() {
-            Token::Symbol(var) => Some(format!("var({})", var)),
-            Token::Operator(op) if (op == "*") => {
-                match self.parse_rvalue() {
-                    Some(v) => Some(format!("deref({})", v)),
-                    None => panic!("deref: invalid rvalue")
-                }
+            Token::Integer(ival) => format!("int({})", ival),
+            Token::String(str) => format!("string({})", str),
+            Token::Char(chars) => format!("char({})", chars[0]),
+            Token::Symbol(var) => format!("var({})", var),
+            Token::OpeningParenthesis => {
+                let expr = format!("({})", self.parse_rvalue());
+
+                self.check(Token::ClosingParenthesis);
+
+                return expr;
             },
-            _ => {
-                match self.parse_rvalue() {
-                    Some(v) => {
-                        if self.next() != Token::OpeningBracket {
-                            panic!("arr: expecting [, go {:?}", self.current());
-                        }
-
-                        match self.parse_rvalue() {
-                            Some(index) => {
-                                if self.next() != Token::ClosingBracket {
-                                    panic!("arr: expecting ], go {:?}", self.current());
-                                }
-
-                                Some(format!("var({}[{}])", v, index))
-                            },
-                            None => panic!("arr: invalid rvalue index")
-                        }
-                    },
-                    None => panic!("arr: invalid rvalue")
-                }
-            }
+            tok => panic!("expr: Invalid token {:?} expecting int, string, char, symbol or (", tok),
         }
     }
 
@@ -262,5 +378,13 @@ impl Parser {
 
     fn current(&self) -> Token {
         self.tokens[self.cursor].clone()
+    }
+
+    fn check(&mut self, expecting: Token) {
+        let token = self.next();
+
+        if token != expecting {
+            panic!("invalid token {:?} expecting {:?}", token, expecting);
+        }
     }
 }
