@@ -1,8 +1,10 @@
 use std::path::Path;
+use crate::parser::Parser;
 
 use crate::tokenizer::Tokenizer;
 
 mod tokenizer;
+mod parser;
 
 fn main() {
     let tokenizer = match Tokenizer::from_file(Path::new("example/printn.b")) {
@@ -10,7 +12,5 @@ fn main() {
         Err(e) => panic!("Cannot parse file : {}", e)
     };
 
-    for token in tokenizer.tokens() {
-        println!("{:?}", token);
-    }
+    Parser::parse(tokenizer.tokens())
 }

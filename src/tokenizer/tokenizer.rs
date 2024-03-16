@@ -63,176 +63,185 @@ impl Tokenizer {
 
     pub fn push(&mut self, c: char) -> Result<()> {
         match self.state {
-            TokenizerState::Empty => {
-                match c {
-                    c if c.is_whitespace() => Ok(()),
-                    c if c.is_numeric() => {
+            TokenizerState::Empty => self.push_empty_state(c),
+            TokenizerState::AmbiguousOperator => self.push_ambiguous_state(c),
+            TokenizerState::SymbolOrKeyword => self.push_symbol_or_keyword_state(c),
+            TokenizerState::Comment => self.push_comment_state(c),
+            TokenizerState::Char => self.push_char_state(c),
+            TokenizerState::String => self.push_string_state(c),
+            TokenizerState::Numeric => self.push_numeric_state(c),
+        }
+    }
+
+    fn push_empty_state(&mut self, c: char) -> Result<()> {
+        match c {
+            c if c.is_whitespace() => Ok(()),
+            c if c.is_numeric() => {
+                self.state = TokenizerState::Numeric;
+                self.buffer.push(c);
+
+                Ok(())
+            }
+            '"' => {
+                self.state = TokenizerState::String;
+                Ok(())
+            }
+            '\'' => {
+                self.state = TokenizerState::Char;
+                Ok(())
+            }
+            '(' => Ok(self.tokens.push(Token::OpeningParenthesis)),
+            ')' => Ok(self.tokens.push(Token::ClosingParenthesis)),
+            '[' => Ok(self.tokens.push(Token::OpeningBracket)),
+            ']' => Ok(self.tokens.push(Token::ClosingBracket)),
+            '{' => Ok(self.tokens.push(Token::OpeningBrace)),
+            '}' => Ok(self.tokens.push(Token::ClosingBrace)),
+            ';' => Ok(self.tokens.push(Token::EndOfStatement)),
+            ','|':'|'|'|'&'|'%'|'*'|'?' => Ok(self.tokens.push(Token::Operator(String::from(c)))),
+            '+'|'-'|'/'|'!'|'='|'>'|'<' => {
+                self.state = TokenizerState::AmbiguousOperator;
+                self.buffer.push(c);
+
+                Ok(())
+            }
+            _ => {
+                self.state = TokenizerState::SymbolOrKeyword;
+                self.buffer.push(c);
+
+                Ok(())
+            }
+        }
+    }
+
+    fn push_ambiguous_state(&mut self, c: char) -> Result<()> {
+        match c {
+            c if c.is_whitespace() => self.save_token(),
+            c if c.is_numeric() => {
+                match self.save_token() {
+                    Ok(_) => {
                         self.state = TokenizerState::Numeric;
                         self.buffer.push(c);
 
                         Ok(())
                     }
-                    '"' => {
-                        self.state = TokenizerState::String;
-                        Ok(())
-                    }
-                    '\'' => {
-                        self.state = TokenizerState::Char;
-                        Ok(())
-                    }
-                    '(' => Ok(self.tokens.push(Token::OpeningParenthesis)),
-                    ')' => Ok(self.tokens.push(Token::ClosingParenthesis)),
-                    '[' => Ok(self.tokens.push(Token::OpeningBracket)),
-                    ']' => Ok(self.tokens.push(Token::ClosingBracket)),
-                    '{' => Ok(self.tokens.push(Token::OpeningBrace)),
-                    '}' => Ok(self.tokens.push(Token::ClosingBrace)),
-                    ';' => Ok(self.tokens.push(Token::EndOfStatement)),
-                    ','|':'|'|'|'&'|'%'|'*'|'?' => Ok(self.tokens.push(Token::Operator(String::from(c)))),
-                    '+'|'-'|'/'|'!'|'='|'>'|'<' => {
-                        self.state = TokenizerState::AmbiguousOperator;
-                        self.buffer.push(c);
-
-                        Ok(())
-                    }
-                    _ => {
-                        self.state = TokenizerState::SymbolOrKeyword;
-                        self.buffer.push(c);
-
-                        Ok(())
-                    }
+                    Err(e) => Err(e)
                 }
             }
-            TokenizerState::AmbiguousOperator => {
-                match c {
-                    c if c.is_whitespace() => self.save_token(),
-                    c if c.is_numeric() => {
-                        match self.save_token() {
-                            Ok(_) => {
-                                self.state = TokenizerState::Numeric;
-                                self.buffer.push(c);
 
-                                Ok(())
-                            }
-                            Err(e) => Err(e)
-                        }
-                    }
-
-                    // "double" operators
-                    '+'|'-'|'>'|'<'|'=' if self.buffer.ends_with(c) => {
-                        self.buffer.push(c);
-
-                        self.save_token()
-                    }
-
-                    // comment "/*"
-                    '*' if self.buffer.ends_with('/') => {
-                        self.state = TokenizerState::Comment;
-                        self.buffer.clear();
-
-                        Ok(())
-                    }
-
-                    // inequalities
-                    '=' if ['!', '>', '<'].contains(&self.buffer.chars().next().unwrap()) => { // @todo do not use unwrap
-                        self.buffer.push(c);
-
-                        self.save_token()
-                    }
-
-                    '"' => {
-                        match self.save_token() {
-                            Ok(_) => Ok(self.state = TokenizerState::String),
-                            Err(e) => Err(e)
-                        }
-                    }
-                    '\'' => {
-                        match self.save_token() {
-                            Ok(_) => Ok(self.state = TokenizerState::Char),
-                            Err(e) => Err(e)
-                        }
-                    }
-                    '(' => self.save_and_push(Token::OpeningParenthesis),
-                    ')' => self.save_and_push(Token::ClosingParenthesis),
-                    '[' => self.save_and_push(Token::OpeningBracket),
-                    ']' => self.save_and_push(Token::ClosingBracket),
-                    '{' => self.save_and_push(Token::OpeningBrace),
-                    '}' => self.save_and_push(Token::ClosingBrace),
-                    ';' => self.save_and_push(Token::EndOfStatement),
-                    ','|':'|'|'|'&'|'%'|'?'|'!'|'*'|'>'|'<'|'+'|'-'|'/'|'=' => self.save_and_push(Token::Operator(String::from(c))),
-                    _ => {
-                        self.save_token()
-                            .and_then(|_| self.push(c))
-                    }
-                }
-            }
-            TokenizerState::SymbolOrKeyword => {
-                match c {
-                    c if c.is_whitespace() => self.save_token(),
-
-                    '(' => self.save_and_push(Token::OpeningParenthesis),
-                    ')' => self.save_and_push(Token::ClosingParenthesis),
-                    '[' => self.save_and_push(Token::OpeningBracket),
-                    ']' => self.save_and_push(Token::ClosingBracket),
-                    '{' => self.save_and_push(Token::OpeningBrace),
-                    '}' => self.save_and_push(Token::ClosingBrace),
-                    ';' => self.save_and_push(Token::EndOfStatement),
-
-                    ','|':'|'|'|'&'|'%'|'?'|'!'|'*'|'>'|'<'|'+'|'-'|'/'|'=' => {
-                        self.save_token()
-                            .and_then(|_| self.push(c)) // push from initial state
-                    },
-
-                    _ => {
-                        self.buffer.push(c);
-
-                        Ok(())
-                    }
-                }
-            }
-            TokenizerState::Comment => {
-                if c == '/' && self.buffer.pop().is_some_and(|o| o == '*') {
-                    self.reset_state();
-                }
-
-                if c == '*' {
-                    self.buffer.push(c);
-                }
-
-                Ok(())
-            }
-            TokenizerState::Char => {
-                if c == '\'' {
-                    return self.save_token();
-                }
-
-                // @todo parse meta char
-
+            // "double" operators
+            '+'|'-'|'>'|'<'|'=' if self.buffer.ends_with(c) => {
                 self.buffer.push(c);
 
+                self.save_token()
+            }
+
+            // comment "/*"
+            '*' if self.buffer.ends_with('/') => {
+                self.state = TokenizerState::Comment;
+                self.buffer.clear();
+
                 Ok(())
             }
-            TokenizerState::String => {
-                if c == '"' {
-                    return self.save_token();
-                }
 
-                // @todo parse meta char
-
+            // inequalities
+            '=' if ['!', '>', '<'].contains(&self.buffer.chars().next().unwrap()) => { // @todo do not use unwrap
                 self.buffer.push(c);
 
-                Ok(())
+                self.save_token()
             }
-            TokenizerState::Numeric => {
-                if c.is_numeric() {
-                    self.buffer.push(c);
 
-                    return Ok(());
+            '"' => {
+                match self.save_token() {
+                    Ok(_) => Ok(self.state = TokenizerState::String),
+                    Err(e) => Err(e)
                 }
-
+            }
+            '\'' => {
+                match self.save_token() {
+                    Ok(_) => Ok(self.state = TokenizerState::Char),
+                    Err(e) => Err(e)
+                }
+            }
+            '(' => self.save_and_push(Token::OpeningParenthesis),
+            ')' => self.save_and_push(Token::ClosingParenthesis),
+            '[' => self.save_and_push(Token::OpeningBracket),
+            ']' => self.save_and_push(Token::ClosingBracket),
+            '{' => self.save_and_push(Token::OpeningBrace),
+            '}' => self.save_and_push(Token::ClosingBrace),
+            ';' => self.save_and_push(Token::EndOfStatement),
+            ','|':'|'|'|'&'|'%'|'?'|'!'|'*'|'>'|'<'|'+'|'-'|'/'|'=' => self.save_and_push(Token::Operator(String::from(c))),
+            _ => {
                 self.save_token()
                     .and_then(|_| self.push(c))
             }
         }
+    }
+
+    fn push_symbol_or_keyword_state(&mut self, c: char) -> Result<()> {
+        match c {
+            c if c.is_whitespace() => self.save_token(),
+
+            '(' => self.save_and_push(Token::OpeningParenthesis),
+            ')' => self.save_and_push(Token::ClosingParenthesis),
+            '[' => self.save_and_push(Token::OpeningBracket),
+            ']' => self.save_and_push(Token::ClosingBracket),
+            '{' => self.save_and_push(Token::OpeningBrace),
+            '}' => self.save_and_push(Token::ClosingBrace),
+            ';' => self.save_and_push(Token::EndOfStatement),
+
+            ','|':'|'|'|'&'|'%'|'?'|'!'|'*'|'>'|'<'|'+'|'-'|'/'|'=' => {
+                self.save_token()
+                    .and_then(|_| self.push(c)) // push from initial state
+            },
+
+            _ => {
+                self.buffer.push(c);
+
+                Ok(())
+            }
+        }
+    }
+
+    fn push_comment_state(&mut self, c: char) -> Result<()> {
+        if c == '/' && self.buffer.ends_with('*') {
+            self.reset_state();
+        }
+
+        if c == '*' {
+            self.buffer.push(c);
+        }
+
+        Ok(())
+    }
+
+    fn push_char_state(&mut self, c: char) -> Result<()> {
+        self.parse_string(c, '\'')
+    }
+
+    fn push_string_state(&mut self, c: char) -> Result<()> {
+        self.parse_string(c, '"')
+    }
+
+    fn parse_string(&mut self, c: char, delimiter: char) -> Result<()> {
+        if c == delimiter {
+            return self.save_token();
+        }
+
+        // @todo parse meta char
+
+        self.buffer.push(c);
+
+        Ok(())
+    }
+
+    fn push_numeric_state(&mut self, c: char) -> Result<()> {
+        if c.is_numeric() {
+            self.buffer.push(c);
+
+            return Ok(());
+        }
+
+        self.save_token().and_then(|_| self.push(c))
     }
 
     fn save_and_push(&mut self, token: Token) -> Result<()> {

@@ -1,7 +1,7 @@
 /**
  * All units of the code
  */
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)] // @todo use Copy instead of clone
 pub enum Token {
     /**
      * Represent any symbol, like function name,
@@ -118,4 +118,13 @@ pub enum Token {
      * The return statement.
      */
     Return,
+}
+
+impl Token {
+    pub fn is_operator(&self, c: char) -> bool {
+        match self {
+            Token::Operator(name) => name.len() == 1 && name.starts_with(c),
+            _ => false,
+        }
+    }
 }
